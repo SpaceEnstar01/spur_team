@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, DeviceEventEmitter, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
-import { ChevronRight, FileAudio, LoaderCircle, Pause, Play, RefreshCw, Sparkles, Trash2 } from 'lucide-react-native';
+import { Bot, ChevronRight, FileAudio, LoaderCircle, Pause, Play, RefreshCw, Sparkles, Trash2 } from 'lucide-react-native';
+import { isVoiceAgentDebugEnabled, VOICE_AGENT_READY_EVENT } from '@/voice-agent/voiceAgentRuntime';
+import { primeVoiceAgentPermissionsOnHome } from '@/voice-agent/voiceAgentPermissions';
 
 import { AppScreen } from '@/components/AppScreen';
 import { HomeLeadingActions } from '@/components/HomeLeadingActions';
@@ -36,6 +38,7 @@ export function RecordingListScreen() {
   const [files, setFiles] = useState<LocalAudioFile[]>([]);
   const [analyses, setAnalyses] = useState<Record<string, LocalRecordingAnalysis>>({});
   const [loading, setLoading] = useState(true);
+  const [voiceAgentReady, setVoiceAgentReady] = useState(isVoiceAgentDebugEnabled());
   const [playingUri, setPlayingUri] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -60,6 +63,19 @@ export function RecordingListScreen() {
       if (sound) void sound.unloadAsync();
     };
   }, [refresh]));
+
+  useEffect(() => {
+    const ready = DeviceEventEmitter.addListener(VOICE_AGENT_READY_EVENT, () => setVoiceAgentReady(true));
+    return () => ready.remove();
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    if (!voiceAgentReady) return;
+    const timer = setTimeout(() => {
+      void primeVoiceAgentPermissionsOnHome().catch((error) => console.warn('[voiceAgent] permission preflight failed', error));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [voiceAgentReady]));
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(AUTO_SYNC_COMPLETE_EVENT, () => {
@@ -168,6 +184,11 @@ export function RecordingListScreen() {
       <View style={styles.header}>
         <HomeLeadingActions />
         <View style={styles.flex} />
+        {voiceAgentReady ? (
+          <Pressable style={styles.iconButton} accessibilityLabel="Open Ring AI" onPress={() => navigation.navigate('VoiceAgent')}>
+            <Bot color={colors.text} size={19} />
+          </Pressable>
+        ) : null}
         <Pressable style={styles.iconButton} onPress={() => void refresh()}>
           <RefreshCw color={colors.text} size={18} />
         </Pressable>

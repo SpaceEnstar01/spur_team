@@ -7,18 +7,19 @@ import {
 } from '@/native/YanqiangVoiceNative'
 import { getRingUiSession } from '@/services/ringConnectionSession'
 import { purgeReimportedDeletedAudio } from '@/services/localAudioLibrary'
+import { shouldRetryStalledSync } from '@/services/autoSyncWatchdog'
+import { consumeVoiceAgentSync } from '@/voice-agent/voiceAgentRuntime'
 
 export const AUTO_SYNC_COMPLETE_EVENT = 'spur.autoSyncComplete'
 
 const POLL_INTERVAL_MS = 18_000
 const RECORDING_END_DELAY_MS = 900
 const CONNECT_SYNC_DELAY_MS = 600
-const SYNC_LOCK_TIMEOUT_MS = 3 * 60_000
-
 let started = false
 let lastWorkingState: number | null = null
 let syncInFlight = false
-let syncStartedAt = 0
+let syncLastActivityAt = 0
+let syncRunId = 0
 let connected = false
 let appActive = true
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
@@ -70,6 +71,18 @@ export function startAutoSyncWatch() {
     scheduleAutoSync(RECORDING_END_DELAY_MS, 'recording-end')
   })
 
+  for (const name of [YanqiangVoiceEventNames.syncState, YanqiangVoiceEventNames.syncProgress]) {
+    YanqiangVoiceEvents.addListener(name, () => {
+      if (syncInFlight) syncLastActivityAt = Date.now()
+    })
+  }
+  YanqiangVoiceEvents.addListener(YanqiangVoiceEventNames.fileReady, () => {
+    if (syncInFlight) syncLastActivityAt = Date.now()
+    // A converted file can be processed before the rest of the ring transfer finishes.
+    void purgeReimportedDeletedAudio().then(consumeVoiceAgentSync).catch((error) =>
+      console.warn('[autoSync] file-ready handoff failed', error))
+  })
+
   AppState.addEventListener('change', onAppStateChange)
 
   // Restore from UI session if user already connected earlier in this process.
@@ -114,11 +127,10 @@ function scheduleAutoSync(delayMs: number, reason: string) {
 }
 
 function unlockStaleSyncIfNeeded() {
-  if (!syncInFlight || !syncStartedAt) return
-  if (Date.now() - syncStartedAt < SYNC_LOCK_TIMEOUT_MS) return
-  console.warn('[autoSync] unlocking stale sync lock')
+  if (!shouldRetryStalledSync(syncInFlight, syncLastActivityAt, Date.now())) return
+  console.warn('[autoSync] retrying stalled sync after 30s without transfer activity')
   syncInFlight = false
-  syncStartedAt = 0
+  syncLastActivityAt = 0
 }
 
 async function runAutoSync(reason: string) {
@@ -130,19 +142,25 @@ async function runAutoSync(reason: string) {
   if (!YanqiangVoiceNative.isAvailable) return
 
   syncInFlight = true
-  syncStartedAt = Date.now()
+  syncLastActivityAt = Date.now()
+  const runId = ++syncRunId
   try {
     console.log('[autoSync] syncVoiceRecordings', reason)
     const result = await YanqiangVoiceNative.syncVoiceRecordings()
     await purgeReimportedDeletedAudio()
+    await consumeVoiceAgentSync().catch((error) => console.warn('[autoSync] voice agent handoff failed', error))
     const count = result?.files?.length ?? 0
     console.log('[autoSync] success', reason, 'files=', count)
     DeviceEventEmitter.emit(AUTO_SYNC_COMPLETE_EVENT, { reason, count })
   } catch (error) {
     // Busy / not-ready are expected during recording; keep quiet-ish.
     console.warn('[autoSync] failed', reason, error)
+    await purgeReimportedDeletedAudio().then(consumeVoiceAgentSync).catch((handoffError) =>
+      console.warn('[autoSync] recovery handoff failed', handoffError))
   } finally {
-    syncInFlight = false
-    syncStartedAt = 0
+    if (runId === syncRunId) {
+      syncInFlight = false
+      syncLastActivityAt = 0
+    }
   }
 }

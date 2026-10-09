@@ -2,6 +2,17 @@
 
 #import <RingSDK/RingSDK.h>
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
+
+#if DEBUG && __has_include("SpurVoiceAgentSecrets.h")
+#import "SpurVoiceAgentSecrets.h"
+#endif
+#ifndef SPUR_SILICONFLOW_API_KEY
+#define SPUR_SILICONFLOW_API_KEY @""
+#endif
+#ifndef SPUR_AMAP_WEB_API_KEY
+#define SPUR_AMAP_WEB_API_KEY @""
+#endif
 
 #if __has_include(<YanqiangRingSDK/YanqiangRingSDK-Swift.h>)
 #import <YanqiangRingSDK/YanqiangRingSDK-Swift.h>
@@ -21,6 +32,7 @@ static NSString *const kRecordingDirName = @"voice-recordings";
 @property (nonatomic, assign) BOOL hasListeners;
 @property (nonatomic, assign) BOOL bleConnected;
 @property (nonatomic, assign) BOOL authSucceeded;
+@property (nonatomic, assign) BOOL touchReportingEnabled;
 @property (nonatomic, assign) NSInteger currentWorkingState;
 @property (nonatomic, assign) BOOL syncInProgress;
 @property (nonatomic, assign) NSTimeInterval syncLastActivityAt;
@@ -121,6 +133,21 @@ RCT_EXPORT_MODULE(YanqiangVoiceModule)
   [self.service setLogEnable:YES];
   [self.service setAutoReconnectionEnabled:YES];
   [self configureAudioCallbacks];
+
+  __weak typeof(self) touchSelf = self;
+  [self.service.touchReq listeningTouchEvent:^(NSMutableArray<BTTouchEventModel *> *touchList) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      __strong typeof(touchSelf) owner = touchSelf;
+      if (!owner || !owner.touchReportingEnabled || !owner.authSucceeded) return;
+      for (BTTouchEventModel *item in touchList) {
+        if (item.touchEvent != 0x0103) continue;
+        [owner emit:@"yanqiangSmartTouchEvent" body:@{
+          @"event": @(item.touchEvent),
+          @"timestamp": @((double)item.touchTime * 1000.0)
+        }];
+      }
+    });
+  }];
 
   __weak typeof(self) weakSelf = self;
   [self.service bleStatusUpdated:^(CBManagerState state) {
@@ -737,7 +764,63 @@ RCT_REMAP_METHOD(setTouchEventReporting,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  resolve(@{ @"enabled": @(enabled), @"result": @0 });
+  self.touchReportingEnabled = enabled;
+  resolve(@{ @"enabled": @(enabled), @"result": @(self.authSucceeded ? 1 : 0) });
+}
+
+RCT_REMAP_METHOD(voiceAgentDebugConfig,
+                 voiceAgentDebugConfigWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+#if DEBUG
+  NSString *siliconKey = SPUR_SILICONFLOW_API_KEY;
+  NSString *amapKey = SPUR_AMAP_WEB_API_KEY;
+  resolve(@{ @"enabled": @(siliconKey.length > 0 && amapKey.length > 0), @"siliconFlowApiKey": siliconKey, @"amapWebApiKey": amapKey });
+#else
+  resolve(@{ @"enabled": @NO, @"siliconFlowApiKey": @"", @"amapWebApiKey": @"" });
+#endif
+}
+
+RCT_REMAP_METHOD(openAMapTaxiURI,
+                 openAMapTaxiURI:(NSString *)uri
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+#if DEBUG
+  if (uri.length == 0 || uri.length > 2048 || [uri rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location != NSNotFound) {
+    reject(@"AMAP_INVALID_URI", @"Invalid taxi URI", nil); return;
+  }
+  NSURLComponents *parts = [NSURLComponents componentsWithString:uri];
+  if (![parts.scheme.lowercaseString isEqualToString:@"amapuri"] ||
+      ![parts.host.lowercaseString isEqualToString:@"drive"] ||
+      ![parts.path isEqualToString:@"/takeTaxi"] ||
+      parts.user || parts.password || parts.port || parts.fragment) {
+    reject(@"AMAP_INVALID_URI", @"Invalid taxi URI", nil); return;
+  }
+  NSMutableDictionary<NSString *, NSString *> *values = [NSMutableDictionary dictionary];
+  for (NSURLQueryItem *item in parts.queryItems ?: @[]) {
+    if (values[item.name] != nil) { reject(@"AMAP_INVALID_URI", @"Duplicate taxi parameter", nil); return; }
+    values[item.name] = item.value ?: @"";
+  }
+  NSString *lon = values[@"dlon"];
+  NSString *lat = values[@"dlat"];
+  NSString *destination = values[@"dname"];
+  NSScanner *lonScanner = [NSScanner scannerWithString:lon ?: @""];
+  NSScanner *latScanner = [NSScanner scannerWithString:lat ?: @""];
+  double lonValue = 0, latValue = 0;
+  if (!lon.length || !lat.length || !destination.length ||
+      ![lonScanner scanDouble:&lonValue] || !lonScanner.isAtEnd ||
+      ![latScanner scanDouble:&latValue] || !latScanner.isAtEnd ||
+      lonValue < -180 || lonValue > 180 || latValue < -90 || latValue > 90 || !parts.URL) {
+    reject(@"AMAP_INVALID_URI", @"Taxi destination is missing or invalid", nil); return;
+  }
+  [[UIApplication sharedApplication] openURL:parts.URL options:@{} completionHandler:^(BOOL success) {
+    if (success) resolve(nil);
+    else reject(@"AMAP_OPEN_FAILED", @"AMap could not open the taxi page", nil);
+  }];
+#else
+  reject(@"AMAP_DEBUG_ONLY", @"Debug-only feature", nil);
+#endif
 }
 
 RCT_REMAP_METHOD(queryVoiceRecordingSummary,
@@ -783,7 +866,9 @@ RCT_REMAP_METHOD(syncVoiceRecordings,
     NSTimeInterval inactive = [NSDate date].timeIntervalSince1970 - self.syncLastActivityAt;
     if (self.syncLastActivityAt > 0 && inactive >= kStaleSyncLockSec) {
       NSLog(@"[YanqiangVoice] recovering stale sync lock inactive=%.0fs", inactive);
-      self.syncInProgress = NO;
+      [self failSyncWithCode:@"YANQIANG_SYNC_STALLED"
+                     message:@"Ring transfer stopped making progress; retrying"
+                  generation:self.syncGeneration];
     } else {
       reject(@"YANQIANG_RECORDING_SYNC_BUSY",
              [NSString stringWithFormat:@"Voice recording sync is already running (inactive %.0fms)", inactive * 1000.0],

@@ -1,5 +1,6 @@
 export type RootStackParamList = {
   MainTabs: undefined;
+  VoiceAgent: undefined;
   Device: undefined;
   ConnectLaptop: undefined;
   CloudOffice: undefined;

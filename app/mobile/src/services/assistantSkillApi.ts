@@ -7,6 +7,7 @@ import { assertAudioAgentHttpsForRelease, AUDIO_AGENT_BASE_URL } from '@/config/
 export async function captureVoiceIntent(input: {
   uri: string;
   name?: string;
+  signal?: AbortSignal;
 }): Promise<{ transcript: string; intent: string }> {
   const name = input.name || 'dictation.m4a';
   const body = new FormData();
@@ -20,6 +21,7 @@ export async function captureVoiceIntent(input: {
   const payload = await postJsonOrForm(`${AUDIO_AGENT_BASE_URL}/api/assistant/voice-intent`, {
     method: 'POST',
     body,
+    signal: input.signal,
     timeoutMs: 180_000
   });
   const record = payload as { transcript?: unknown; intent?: unknown };
@@ -89,9 +91,13 @@ async function postJsonOrForm(
     headers?: Record<string, string>;
     body: FormData | string;
     timeoutMs: number;
+    signal?: AbortSignal;
   }
 ): Promise<unknown> {
   const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (init.signal?.aborted) controller.abort();
+  else init.signal?.addEventListener('abort', onAbort);
   const timeout = setTimeout(() => controller.abort(), init.timeoutMs);
   try {
     const response = await fetch(url, {
@@ -119,11 +125,13 @@ async function postJsonOrForm(
     return payload;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
+      if (init.signal?.aborted) throw new Error('Request cancelled');
       throw new Error('Cloud request timed out');
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    init.signal?.removeEventListener('abort', onAbort);
   }
 }
 

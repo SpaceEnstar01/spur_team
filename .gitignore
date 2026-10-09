@@ -43,6 +43,7 @@ app/cloud/**/tmp/
 app/cloud/*.tar.gz
 **/.env
 **/.env.local
+app/mobile/native-sdk/ios/SpurVoiceAgentSecrets.h
 !**/.env.example
 agent/runtime/spur-profile/cordis.patch.resolved.yml
 

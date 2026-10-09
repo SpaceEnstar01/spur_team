@@ -18,6 +18,7 @@
         "NSBluetoothAlwaysUsageDescription": "Spur uses Bluetooth to connect to your recording ring, sync recordings, and read battery and device status.",
         "NSBluetoothPeripheralUsageDescription": "Spur uses Bluetooth to connect to your recording ring, sync recordings, and read battery and device status.",
         "NSMicrophoneUsageDescription": "Spur uses the microphone for on-device recording and audio capture when you choose to record on this iPhone.",
+        "NSSpeechRecognitionUsageDescription": "Spur uses on-device speech recognition to understand your voice commands. If unavailable, audio may be sent to Spur's cloud transcription service.",
         "NSLocalNetworkUsageDescription": "Spur connects to Spur Buddy on your Mac on the local network to send computer tasks.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true

@@ -20,7 +20,7 @@ Pod::Spec.new do |s|
     s.vendored_frameworks = 'RingSDK.framework', 'AB_FOTA.framework'
   end
 
-  s.frameworks = 'Foundation', 'CoreBluetooth', 'CoreServices', 'ExternalAccessory', 'QuartzCore', 'UIKit', 'AVFoundation', 'AudioToolbox'
+  s.frameworks = 'Foundation', 'CoreBluetooth', 'CoreServices', 'ExternalAccessory', 'QuartzCore', 'UIKit', 'AVFoundation', 'AudioToolbox', 'Speech'
   s.libraries = 'c++', 'sqlite3', 'z'
   s.dependency 'React-Core'
   s.pod_target_xcconfig = {

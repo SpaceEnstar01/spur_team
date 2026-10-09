@@ -35,6 +35,8 @@ type YanqiangVoiceNativeModule = {
   connect(macAddress: string): Promise<boolean>
   disconnect(): Promise<boolean>
   setTouchEventReporting(enabled: boolean): Promise<{ enabled: boolean; result: number }>
+  voiceAgentDebugConfig(): Promise<{ enabled: boolean; siliconFlowApiKey: string; amapWebApiKey: string }>
+  openAMapTaxiURI(uri: string): Promise<void>
   queryVoiceRecordingSummary(): Promise<RecordingSummary>
   syncVoiceRecordings(): Promise<{ files: NativeFile[] }>
   getVoiceRecordParam(): Promise<VoiceRecordParamResult>
@@ -55,6 +57,8 @@ export const YanqiangVoiceNative = {
   connect: (macAddress: string) => requireNative().connect(macAddress),
   disconnect: () => requireNative().disconnect(),
   setTouchEventReporting: (enabled: boolean) => requireNative().setTouchEventReporting(enabled),
+  voiceAgentDebugConfig: () => requireNative().voiceAgentDebugConfig(),
+  openAMapTaxiURI: (uri: string) => requireNative().openAMapTaxiURI(uri),
   queryVoiceRecordingSummary: () => requireNative().queryVoiceRecordingSummary(),
   syncVoiceRecordings: () => requireNative().syncVoiceRecordings(),
   getVoiceRecordParam: () => requireNative().getVoiceRecordParam(),

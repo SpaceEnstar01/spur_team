@@ -1,5 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Platform } from 'react-native';
 import { Bot, Mic2 } from 'lucide-react-native';
 
 import { AgentFlowScreen } from '@/screens/assistant/AgentFlowScreen';
@@ -10,6 +11,7 @@ import { YanqiangRecordingDebugScreen } from '@/screens/device/YanqiangRecording
 import { YanqiangButtonDebugScreen } from '@/screens/device/YanqiangButtonDebugScreen';
 import { MeScreen } from '@/screens/me/MeScreen';
 import { RecordingListScreen } from '@/screens/recordings/RecordingListScreen';
+import { VoiceAgentScreen } from '@/screens/voice-agent/VoiceAgentScreen';
 import { LocalRecordingResultScreen } from '@/screens/recordings/LocalRecordingResultScreen';
 import { TranscriptScreen } from '@/screens/recordings/TranscriptScreen';
 import { colors } from '@/theme/colors';
@@ -23,6 +25,7 @@ export function AppNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="MainTabs" component={MainTabs} />
+      {__DEV__ && Platform.OS === 'ios' ? <Stack.Screen name="VoiceAgent" component={VoiceAgentScreen} /> : null}
       <Stack.Screen name="Device" component={YanqiangVoiceDebugScreen} />
       <Stack.Screen name="ConnectLaptop" component={ConnectLaptopScreen} />
       <Stack.Screen name="CloudOffice" component={CloudOfficeScreen} />

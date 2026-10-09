@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system';
 import { processAudioWithAi } from '@/services/audioAgentApi';
 import { compareDemoFirst, isDemoAudioName } from '@/services/demoContent';
 import { deleteLocalAudioFile, listLocalAudioFiles, type LocalAudioFile } from '@/services/localAudioLibrary';
+import { isVoiceAgentOwnedFile } from '@/voice-agent/voiceAgentRuntime';
 
 export type AgentCardStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type AgentCardCategory = 'idea' | 'report' | 'action' | 'note';
@@ -45,7 +46,7 @@ const INDEX_PATH = `${FileSystem.documentDirectory}agent-cards.json`;
 
 export async function syncLocalAgentCards(): Promise<LocalAgentCard[]> {
   const [files, saved] = await Promise.all([listLocalAudioFiles(), readCards()]);
-  const shortFiles = files.filter((file) => file.category === 'agent');
+  const shortFiles = files.filter((file) => file.category === 'agent' && !isVoiceAgentOwnedFile(file.id));
   const cards = shortFiles.map((file) => {
     const existing = saved[file.id];
     if (!existing) return createPendingCard(file);
