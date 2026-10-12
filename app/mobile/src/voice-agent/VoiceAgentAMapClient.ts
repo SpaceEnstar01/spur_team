@@ -1,3 +1,5 @@
+import type { RideRoute } from './voiceAgentPolicy'
+
 type FetchLike = typeof fetch
 
 function textContent(payload: any): string[] {
@@ -33,8 +35,8 @@ function taxiParams(uri: string): Map<string, string> | undefined {
   } catch { return undefined }
 }
 
-export async function createTaxiURI(destination: string, apiKey: string, fetcher: FetchLike = fetch, signal?: AbortSignal): Promise<string> {
-  if (!destination.trim() || !apiKey.trim()) throw new Error('AMap destination or Debug key is missing')
+export async function createTaxiURI(route: RideRoute, apiKey: string, fetcher: FetchLike = fetch, signal?: AbortSignal): Promise<string> {
+  if (!route.destination.trim() || !apiKey.trim()) throw new Error('AMap destination or Debug key is missing')
   const call = async (id: number, name: string, args: Record<string, string>) => {
     const response = await fetcher(`https://mcp.amap.com/mcp?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
@@ -45,28 +47,38 @@ export async function createTaxiURI(destination: string, apiKey: string, fetcher
     if (!response.ok) throw new Error(`AMap ${name} failed`)
     return textContent(await response.json())
   }
-  const geo = await call(1, 'maps_geo', { address: destination })
-  let coords: [string, string] | undefined
-  for (const line of geo) {
-    try {
-      const result = JSON.parse(line)
-      for (const item of result?.results || []) {
-        coords = coordinate(item?.location || '')
-        if (coords) break
-      }
-    } catch { /* non-JSON tool text */ }
-    if (coords) break
+  const geocode = async (address: string, id: number): Promise<[string, string]> => {
+    const geo = await call(id, 'maps_geo', { address })
+    for (const line of geo) {
+      try {
+        const result = JSON.parse(line)
+        for (const item of result?.results || []) {
+          const coords = coordinate(item?.location || '')
+          if (coords) return coords
+        }
+      } catch { /* non-JSON tool text */ }
+    }
+    throw new Error(`AMap could not locate ${address}`)
   }
-  if (!coords) throw new Error('AMap could not locate the destination')
-  const taxi = await call(2, 'maps_schema_take_taxi', { dlon: coords[0], dlat: coords[1], dname: destination })
+  const [originCoords, destinationCoords] = await Promise.all([
+    route.origin ? geocode(route.origin, 1) : Promise.resolve(undefined),
+    geocode(route.destination, route.origin ? 2 : 1),
+  ])
+  const args = {
+    ...(originCoords ? { slon: originCoords[0], slat: originCoords[1], sname: route.origin! } : {}),
+    dlon: destinationCoords[0], dlat: destinationCoords[1], dname: route.destination,
+  }
+  const taxi = await call(route.origin ? 3 : 2, 'maps_schema_take_taxi', args)
   for (const line of taxi) {
     const uri = line.match(/amapuri:\/\/drive\/takeTaxi\?[^\s"'<>]+/)?.[0]
     if (!uri || uri.length > 2048) continue
     const params = taxiParams(uri)
-    if (!params || ['dlon', 'dlat', 'dname'].some((name) => !params.has(name))) continue
-    if (Number(params.get('dlon')) === Number(coords[0]) &&
-        Number(params.get('dlat')) === Number(coords[1]) &&
-        params.get('dname') === destination) return uri
+    if (!params) continue
+    const matchingDestination = Number(params.get('dlon')) === Number(destinationCoords[0]) &&
+      Number(params.get('dlat')) === Number(destinationCoords[1]) && params.get('dname') === route.destination
+    const matchingOrigin = !originCoords || (Number(params.get('slon')) === Number(originCoords[0]) &&
+      Number(params.get('slat')) === Number(originCoords[1]) && params.get('sname') === route.origin)
+    if (matchingDestination && matchingOrigin) return uri
   }
-  throw new Error('AMap returned a taxi page without the requested destination')
+  throw new Error('AMap returned a taxi page without the requested pickup or destination')
 }

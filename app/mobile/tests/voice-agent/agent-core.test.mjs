@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { classifyPrompt, extractRideDestination, validateTaxiURI } from '../../src/voice-agent/voiceAgentPolicy.ts'
+import { classifyPrompt, extractRideDestination, extractRideRoute, validateTaxiURI } from '../../src/voice-agent/voiceAgentPolicy.ts'
 import { createVoiceAgentController } from '../../src/voice-agent/VoiceAgentController.ts'
 import { createTaxiURI } from '../../src/voice-agent/VoiceAgentAMapClient.ts'
 import { visibleAnswer } from '../../src/voice-agent/VoiceAgentAIClient.ts'
@@ -13,6 +13,15 @@ test('weather stays chat, image is explicit, and ride needs a destination', () =
   assert.equal(classifyPrompt('帮我打车去虹桥机场'), 'ride')
   assert.equal(extractRideDestination('帮我打车'), undefined)
   assert.equal(extractRideDestination('帮我打车去虹桥机场'), '虹桥机场')
+})
+
+test('a requested pickup is retained instead of falling back to current location', () => {
+  assert.deepEqual(extractRideRoute('从苏州站打车到上海虹桥机场'), { origin: '苏州站', destination: '上海虹桥机场' })
+  assert.deepEqual(extractRideRoute('打车从苏州站到上海虹桥机场'), { origin: '苏州站', destination: '上海虹桥机场' })
+  assert.deepEqual(extractRideRoute('从苏州站到上海虹桥机场打车'), { origin: '苏州站', destination: '上海虹桥机场' })
+  assert.deepEqual(extractRideRoute('帮我打车去虹桥机场'), { destination: '虹桥机场' })
+  assert.deepEqual(extractRideRoute('打车去从江站'), { destination: '从江站' })
+  assert.equal(extractRideRoute('从苏州站打车'), undefined)
 })
 
 test('taxi link requires one matching destination and valid coordinates', () => {
@@ -55,10 +64,57 @@ test('AMap only accepts matching taxi URI from two successful MCP calls', async 
       ? JSON.stringify({ results: [{ location: '121.3,31.2' }] })
       : 'amapuri://drive/takeTaxi?dlon=121.3&dlat=31.2&dname=%E8%99%B9%E6%A1%A5%E6%9C%BA%E5%9C%BA' }] } }) }
   }
-  assert.match(await createTaxiURI('虹桥机场', 'test-key', fetcher), /^amapuri:/)
+  assert.match(await createTaxiURI({ destination: '虹桥机场' }, 'test-key', fetcher), /^amapuri:/)
   assert.deepEqual(calls, ['maps_geo', 'maps_schema_take_taxi'])
-  await assert.rejects(createTaxiURI('虹桥机场', '', fetcher))
-  await assert.rejects(createTaxiURI('虹桥机场', 'test-key', async () => ({ ok: true, json: async () => ({ result: { content: [{ type: 'text', text: 'invalid' }] } }) })))
+  await assert.rejects(createTaxiURI({ destination: '虹桥机场' }, '', fetcher))
+  await assert.rejects(createTaxiURI({ destination: '虹桥机场' }, 'test-key', async () => ({ ok: true, json: async () => ({ result: { content: [{ type: 'text', text: 'invalid' }] } }) })))
+})
+
+test('AMap geocodes both requested places and only opens a taxi link with the requested pickup', async () => {
+  const calls = []
+  const route = { origin: '苏州站', destination: '上海虹桥机场' }
+  const pickup = 'amapuri://drive/takeTaxi?slon=120.6&slat=31.3&sname=%E8%8B%8F%E5%B7%9E%E7%AB%99&dlon=121.3&dlat=31.2&dname=%E4%B8%8A%E6%B5%B7%E8%99%B9%E6%A1%A5%E6%9C%BA%E5%9C%BA'
+  const fetcher = async (_url, init) => {
+    const { name, arguments: args } = JSON.parse(init.body).params
+    calls.push({ name, args })
+    const response = name === 'maps_geo'
+      ? JSON.stringify({ results: [{ location: args.address === '苏州站' ? '120.6,31.3' : '121.3,31.2' }] })
+      : pickup
+    return { ok: true, json: async () => ({ result: { content: [{ type: 'text', text: response }] } }) }
+  }
+  assert.equal(await createTaxiURI(route, 'test-key', fetcher), pickup)
+  assert.deepEqual(calls, [
+    { name: 'maps_geo', args: { address: '苏州站' } },
+    { name: 'maps_geo', args: { address: '上海虹桥机场' } },
+    { name: 'maps_schema_take_taxi', args: { slon: '120.6', slat: '31.3', sname: '苏州站', dlon: '121.3', dlat: '31.2', dname: '上海虹桥机场' } },
+  ])
+  await assert.rejects(createTaxiURI(route, 'test-key', async (_url, init) => {
+    const { name, arguments: args } = JSON.parse(init.body).params
+    const response = name === 'maps_geo'
+      ? JSON.stringify({ results: [{ location: args.address === '苏州站' ? '120.6,31.3' : '121.3,31.2' }] })
+      : pickup.replace('slon=120.6', 'slon=120.7')
+    return { ok: true, json: async () => ({ result: { content: [{ type: 'text', text: response }] } }) }
+  }), /pickup|origin/i)
+})
+
+test('AMap starts pickup and destination lookup together for an explicit route', async () => {
+  const addresses = []
+  let releaseOrigin
+  const originResponse = new Promise((resolve) => { releaseOrigin = resolve })
+  const fetcher = async (_url, init) => {
+    const { name, arguments: args } = JSON.parse(init.body).params
+    if (name === 'maps_geo') {
+      addresses.push(args.address)
+      if (args.address === '苏州站') await originResponse
+      return { ok: true, json: async () => ({ result: { content: [{ type: 'text', text: JSON.stringify({ results: [{ location: '120.6,31.3' }] }) }] } }) }
+    }
+    return { ok: true, json: async () => ({ result: { content: [{ type: 'text', text: 'amapuri://drive/takeTaxi?slon=120.6&slat=31.3&sname=%E8%8B%8F%E5%B7%9E%E7%AB%99&dlon=120.6&dlat=31.3&dname=%E4%B8%8A%E6%B5%B7%E8%99%B9%E6%A1%A5%E6%9C%BA%E5%9C%BA' }] } }) }
+  }
+  const pending = createTaxiURI({ origin: '苏州站', destination: '上海虹桥机场' }, 'test-key', fetcher)
+  await Promise.resolve()
+  releaseOrigin()
+  assert.deepEqual(addresses, ['苏州站', '上海虹桥机场'])
+  await pending
 })
 
 test('a long clip remains an ordinary recording instead of going to the agent', () => {

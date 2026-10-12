@@ -6,7 +6,7 @@ import { listLocalAudioFiles } from '@/services/localAudioLibrary'
 import { transcribeVoiceAgentAudio } from './voiceAgentTranscription'
 import { AUDIO_AGENT_BASE_URL } from '@/config/api'
 import { createVoiceAgentController, type AgentFile, type AgentTask } from './VoiceAgentController'
-import { classifyPrompt, extractRideDestination } from './voiceAgentPolicy'
+import { classifyPrompt, extractRideRoute } from './voiceAgentPolicy'
 import { createTaxiURI } from './VoiceAgentAMapClient'
 import { startLingReply } from './VoiceAgentAIClient'
 import { generateVoiceAgentImage } from './VoiceAgentImageService'
@@ -180,12 +180,12 @@ async function runAgentTask(id: string, prompt: string, generation: number) {
     requireCurrent(generation, controller.signal)
     const kind = classifyPrompt(prompt)
     if (kind === 'ride') {
-      const destination = extractRideDestination(prompt)
-      if (!destination) throw new Error('Please tell me where you want to go.')
-      const uri = await createTaxiURI(destination, config?.amapWebApiKey || '', fetch, controller.signal)
+      const route = extractRideRoute(prompt)
+      if (!route) throw new Error('Please tell me the pickup and destination clearly.')
+      const uri = await createTaxiURI(route, config?.amapWebApiKey || '', fetch, controller.signal)
       requireCurrent(generation, controller.signal)
       await YanqiangVoiceNative.openAMapTaxiURI(uri)
-      voiceAgentController.update(id, { status: 'completed', destination, output: `AMap opened with destination: ${destination}. Please confirm the ride in AMap.` })
+      voiceAgentController.update(id, { status: 'completed', destination: route.destination, output: `AMap opened with ${route.origin ? `pickup: ${route.origin} and ` : ''}destination: ${route.destination}. Please confirm the ride in AMap.` })
     } else if (kind === 'image') {
       const result = await generateVoiceAgentImage(prompt, AUDIO_AGENT_BASE_URL, fetch, controller.signal)
       requireCurrent(generation, controller.signal)

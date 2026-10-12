@@ -1,4 +1,5 @@
 export type AgentPromptKind = 'ride' | 'image' | 'chat'
+export type RideRoute = { origin?: string; destination: string }
 
 export function classifyPrompt(prompt: string): AgentPromptKind {
   const ride = /(?:打车|网约车|出租车|叫.{0,3}车|taxi|ride\s?hail)/i.exec(prompt)
@@ -13,10 +14,17 @@ export function classifyPrompt(prompt: string): AgentPromptKind {
 }
 
 export function extractRideDestination(prompt: string): string | undefined {
+  return extractRideRoute(prompt)?.destination
+}
+
+export function extractRideRoute(prompt: string): RideRoute | undefined {
   if (classifyPrompt(prompt) !== 'ride') return undefined
-  const match = prompt.match(/(?:去|到|前往|送我去|to)\s*([^，。！？,!?]{2,60})/i)
-  const destination = match?.[1]?.replace(/(?:吧|好吗|可以吗|谢谢|请帮我)\s*$/u, '').trim()
-  return destination || undefined
+  const explicit = prompt.match(/从\s*([^，。！？,!?]{1,60}?)\s*(?:打车|叫车|坐出租车|乘出租车)?\s*(?:到|去|前往)\s*([^，。！？,!?]{1,60})/u)
+  const destination = (explicit?.[2] || prompt.match(/(?:去|到|前往|to)\s*([^，。！？,!?]{2,60})/i)?.[1])
+    ?.replace(/(?:打车|吧|好吗|可以吗|谢谢|请帮我)\s*$/u, '').trim()
+  if (!destination || (!explicit && /从[^，。！？,!?]{1,60}(?:打车|到|去|前往)/u.test(prompt))) return undefined
+  const origin = explicit?.[1]?.trim()
+  return origin && !/^(?:当前位置|这里|我现在的位置)$/u.test(origin) ? { origin, destination } : { destination }
 }
 
 export function validCoordinates(longitude: string, latitude: string): boolean {
